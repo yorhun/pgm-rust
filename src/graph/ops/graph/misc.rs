@@ -208,6 +208,8 @@ where
 }
 
 /// Check whether a given mapping is a valid graph isomorphism between two graphs.
+/// This is a verifier function, where the caller takes responsibility for knowing
+/// (or guessing) the correspondence. check_isomorphism just confirms it. 
 ///
 /// # Description
 /// Given two graphs `g1` and `g2` and a vertex mapping `f`, returns `true` if and only if
@@ -278,9 +280,11 @@ where
     }
 
     // 2. Apply f to all nodes in g1
+    // mapped is the list of output nodes after running every vertex of g1 through f
     let mapped: Vec<N> = g1.vertices().iter().map(|n| f(n)).collect();
 
     // 3. Injectivity: all mapped IDs must be distinct
+    // two different inputs should not map to the same output
     let mapped_ids: HashSet<&str> = mapped.iter().map(|n| n.id()).collect();
     if mapped_ids.len() != mapped.len() {
         return false;
@@ -556,6 +560,52 @@ mod tests {
         let g1 = mk_triangle("g1_");
         let g2 = mk_g1(); // 5 nodes, 3 edges
         let f = |n: &Node| -> Node { mk_node(n.id()) };
+        assert!(!check_isomorphism(&g1, &g2, f));
+    }
+
+    fn mk_path(prefix: &str) -> Graph<Node, Edge<Node>> {
+    // a-b-c-d
+    let a = mk_node(&format!("{prefix}a"));
+    let b = mk_node(&format!("{prefix}b"));
+    let c = mk_node(&format!("{prefix}c"));
+    let d = mk_node(&format!("{prefix}d"));
+    let e1 = mk_uedge(&format!("{prefix}a"), &format!("{prefix}b"), &format!("{prefix}e1"));
+    let e2 = mk_uedge(&format!("{prefix}b"), &format!("{prefix}c"), &format!("{prefix}e2"));
+    let e3 = mk_uedge(&format!("{prefix}c"), &format!("{prefix}d"), &format!("{prefix}e3"));
+    let nset = HashSet::from([a, b, c, d]);
+    let eset = mk_edges(vec![e1, e2, e3]);
+    Graph::new("g".to_string(), HashMap::new(), nset, eset)
+    }
+
+    fn mk_star(prefix: &str) -> Graph<Node, Edge<Node>> {
+        // hub connected to 3 leaves: hub-l1, hub-l2, hub-l3
+        let hub = mk_node(&format!("{prefix}hub"));
+        let l1  = mk_node(&format!("{prefix}l1"));
+        let l2  = mk_node(&format!("{prefix}l2"));
+        let l3  = mk_node(&format!("{prefix}l3"));
+        let e1 = mk_uedge(&format!("{prefix}hub"), &format!("{prefix}l1"), &format!("{prefix}e1"));
+        let e2 = mk_uedge(&format!("{prefix}hub"), &format!("{prefix}l2"), &format!("{prefix}e2"));
+        let e3 = mk_uedge(&format!("{prefix}hub"), &format!("{prefix}l3"), &format!("{prefix}e3"));
+        let nset = HashSet::from([hub, l1, l2, l3]);
+        let eset = mk_edges(vec![e1, e2, e3]);
+        Graph::new("g".to_string(), HashMap::new(), nset, eset)
+    }
+
+    #[test]
+    fn test_check_isomorphism_wrong_structure() {
+        // path and star: same size (4 nodes, 3 edges), but different structure
+        let g1 = mk_path("g1_");
+        let g2 = mk_star("g2_");
+        // f: a->hub, b->l1, c->l2, d->l3
+        // bijective, but b-c in g1 maps to l1-l2, which doesn't exist in g2
+        let f = |n: &Node| -> Node {
+            match n.id().trim_start_matches("g1_") {
+                "a"  => mk_node("g2_hub"),
+                "b"  => mk_node("g2_l1"),
+                "c"  => mk_node("g2_l2"),
+                _    => mk_node("g2_l3"),
+            }
+        };
         assert!(!check_isomorphism(&g1, &g2, f));
     }
 }
