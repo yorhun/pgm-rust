@@ -207,6 +207,114 @@ where
     (nset, eset)
 }
 
+/// Check whether a given mapping is a valid graph isomorphism between two graphs.
+///
+/// # Description
+/// Given two graphs `g1` and `g2` and a vertex mapping `f`, returns `true` if and only if
+/// `f` is a bijection from `V(g1)` to `V(g2)` that preserves adjacency (and non-adjacency).
+/// Edge direction is ignored, consistent with the rest of the library.
+///
+/// Formally, `f` is a valid isomorphism when:
+/// - `f` is injective: distinct nodes in `g1` map to distinct nodes in `g2`
+/// - `f` is surjective: every node in `g2` is the image of some node in `g1`
+/// - Edge-preserving: for every edge `{s, t}` in `g1`, there exists an edge `{f(s), f(t)}` in `g2`
+///
+/// # Args
+/// - `g1`: first graph
+/// - `g2`: second graph
+/// - `f`: closure mapping a node from `g1` to a node in `g2`
+///
+/// # Example
+/// ```
+/// use pgm_rust::graph::types::edge::Edge;
+/// use pgm_rust::graph::types::edgetype::EdgeType;
+/// use pgm_rust::graph::types::graph::Graph;
+/// use pgm_rust::graph::types::node::Node;
+/// use pgm_rust::graph::ops::graph::misc::check_isomorphism;
+/// use std::collections::HashSet;
+/// use std::collections::HashMap;
+///
+/// // g1: triangle on {a, b, c}
+/// let e1 = Edge::empty("e1", EdgeType::Undirected, "a", "b");
+/// let e2 = Edge::empty("e2", EdgeType::Undirected, "b", "c");
+/// let e3 = Edge::empty("e3", EdgeType::Undirected, "a", "c");
+/// let g1 = Graph::from_edge_node_set(
+///     HashSet::from([e1, e2, e3]),
+///     HashSet::from([Node::empty("a"), Node::empty("b"), Node::empty("c")]),
+/// );
+///
+/// // g2: triangle on {x, y, z}
+/// let e4 = Edge::empty("e4", EdgeType::Undirected, "x", "y");
+/// let e5 = Edge::empty("e5", EdgeType::Undirected, "y", "z");
+/// let e6 = Edge::empty("e6", EdgeType::Undirected, "x", "z");
+/// let g2 = Graph::from_edge_node_set(
+///     HashSet::from([e4, e5, e6]),
+///     HashSet::from([Node::empty("x"), Node::empty("y"), Node::empty("z")]),
+/// );
+///
+/// // f: a->x, b->y, c->z
+/// let f = |n: &Node| -> Node {
+///     match n.id().as_str() {
+///         "a" => Node::empty("x"),
+///         "b" => Node::empty("y"),
+///         _   => Node::empty("z"),
+///     }
+/// };
+/// assert!(check_isomorphism(&g1, &g2, f));
+/// ```
+pub fn check_isomorphism<N, E, G, F>(g1: &G, g2: &G, f: F) -> bool
+where
+    N: NodeTrait,
+    E: EdgeTrait<N>,
+    G: GraphTrait<N, E>,
+    F: Fn(&N) -> N,
+{
+    // 1. Size guards
+    if g1.vertices().len() != g2.vertices().len() {
+        return false;
+    }
+    if g1.edges().len() != g2.edges().len() {
+        return false;
+    }
+
+    // 2. Apply f to all nodes in g1
+    let mapped: Vec<N> = g1.vertices().iter().map(|n| f(n)).collect();
+
+    // 3. Injectivity: all mapped IDs must be distinct
+    let mapped_ids: HashSet<&str> = mapped.iter().map(|n| n.id()).collect();
+    if mapped_ids.len() != mapped.len() {
+        return false;
+    }
+
+    // 4. Surjectivity: mapped IDs must equal V(g2) IDs
+    let g2_ids: HashSet<&str> = g2.vertices().iter().map(|n| n.id()).collect();
+    if mapped_ids != g2_ids {
+        return false;
+    }
+
+    // 5. Edge preservation: build a set of (start_id, end_id) pairs from g2 (both orderings)
+    let g2_edge_pairs: HashSet<(&str, &str)> = g2
+        .edges()
+        .iter()
+        .flat_map(|e| {
+            let s = e.start().id();
+            let t = e.end().id();
+            [(s, t), (t, s)]
+        })
+        .collect();
+
+    // For each edge in g1, check that the mapped edge exists in g2
+    for e in g1.edges() {
+        let fs = f(e.start());
+        let ft = f(e.end());
+        if !g2_edge_pairs.contains(&(fs.id(), ft.id())) {
+            return false;
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +485,77 @@ mod tests {
 
         //
         assert_eq!(edges, erefset);
+    }
+
+    // --- check_isomorphism tests ---
+
+    fn mk_triangle(prefix: &str) -> Graph<Node, Edge<Node>> {
+        let a = mk_node(&format!("{prefix}a"));
+        let b = mk_node(&format!("{prefix}b"));
+        let c = mk_node(&format!("{prefix}c"));
+        let e1 = mk_uedge(&format!("{prefix}a"), &format!("{prefix}b"), &format!("{prefix}e1"));
+        let e2 = mk_uedge(&format!("{prefix}b"), &format!("{prefix}c"), &format!("{prefix}e2"));
+        let e3 = mk_uedge(&format!("{prefix}a"), &format!("{prefix}c"), &format!("{prefix}e3"));
+        let nset = HashSet::from([a, b, c]);
+        let eset = mk_edges(vec![e1, e2, e3]);
+        Graph::new("g".to_string(), HashMap::new(), nset, eset)
+    }
+
+    #[test]
+    fn test_check_isomorphism_valid() {
+        // g1: triangle {a,b,c}, g2: triangle {x,y,z}
+        // f: a->x, b->y, c->z is a valid isomorphism
+        let g1 = mk_triangle("g1_");
+        let g2 = mk_triangle("g2_");
+        let f = |n: &Node| -> Node {
+            match n.id().trim_start_matches("g1_") {
+                "a" => mk_node("g2_a"),
+                "b" => mk_node("g2_b"),
+                _   => mk_node("g2_c"),
+            }
+        };
+        assert!(check_isomorphism(&g1, &g2, f));
+    }
+
+    #[test]
+    fn test_check_isomorphism_non_injective() {
+        // f maps two distinct nodes to the same target — not injective
+        let g1 = mk_triangle("g1_");
+        let g2 = mk_triangle("g2_");
+        let f = |_n: &Node| -> Node { mk_node("g2_a") }; // all map to same node
+        assert!(!check_isomorphism(&g1, &g2, f));
+    }
+
+    #[test]
+    fn test_check_isomorphism_edge_breaking() {
+        // g1: triangle {a,b,c} with edges a-b, b-c, a-c
+        // g2: path   {x,y,z} with edges x-y, y-z only (missing x-z)
+        let g1 = mk_triangle("g1_");
+        let e4 = mk_uedge("g2_x", "g2_y", "g2_e1");
+        let e5 = mk_uedge("g2_y", "g2_z", "g2_e2");
+        // deliberately only 2 edges — size guard will catch this
+        let g2: Graph<Node, Edge<Node>> = Graph::new(
+            "g2".to_string(),
+            HashMap::new(),
+            HashSet::from([mk_node("g2_x"), mk_node("g2_y"), mk_node("g2_z")]),
+            mk_edges(vec![e4, e5]),
+        );
+        let f = |n: &Node| -> Node {
+            match n.id().trim_start_matches("g1_") {
+                "a" => mk_node("g2_x"),
+                "b" => mk_node("g2_y"),
+                _   => mk_node("g2_z"),
+            }
+        };
+        assert!(!check_isomorphism(&g1, &g2, f));
+    }
+
+    #[test]
+    fn test_check_isomorphism_size_mismatch() {
+        // g1 has 3 nodes, g2 has 4 nodes — trivially not isomorphic
+        let g1 = mk_triangle("g1_");
+        let g2 = mk_g1(); // 5 nodes, 3 edges
+        let f = |n: &Node| -> Node { mk_node(n.id()) };
+        assert!(!check_isomorphism(&g1, &g2, f));
     }
 }
